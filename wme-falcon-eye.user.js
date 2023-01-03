@@ -4,6 +4,8 @@
 // @version      0.0.9.5
 // @description  validates doglegs for Falcon
 // @author       bedo2991
+// @updateURL    https://github.com/bedo2991/wme-falcon-eye/releases/latest/download/wme-falcon-eye.user.js
+// @downloadURL  https://github.com/bedo2991/wme-falcon-eye/releases/latest/download/wme-falcon-eye.user.js
 // @match            https://*.waze.com/editor*
 // @match            https://*.waze.com/*/editor*
 // @exclude          https://www.waze.com/*/user/editor*
