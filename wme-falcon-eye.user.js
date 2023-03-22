@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Falcon Eye
 // @namespace    bedo2991-waze
-// @version      0.0.9.5
+// @version      1.0.0
 // @description  validates doglegs for Falcon
 // @author       bedo2991
 // @updateURL    https://github.com/bedo2991/wme-falcon-eye/releases/latest/download/wme-falcon-eye.user.js
@@ -27,13 +27,27 @@
     const SCRIPT_NAME = GM_info.script.name;
     const SCRIPT_SHORT_NAME = "dog";
 
+    const states = Object.freeze({
+        enabled : Symbol("Enabled"),
+        disabled : Symbol("Disabled"),
+        zoom_disabled : Symbol("Zoom Disabled"),
+    });
+
+    const scriptEnabledDefault = true;
+    const energy_saving_enabledDefault = true;
+    const checkFromZoomDefault = 17;
+
+    const settings = Object.seal({
+        script_enabled : scriptEnabledDefault,
+        energy_saving: energy_saving_enabledDefault,
+        check_from_zoom : checkFromZoomDefault
+    });
+
     const One80DividedByPi = 180.0 / Math.PI;
 
     let OLWazeProjection = null;
     let WorldGeodeticSystemProjection = null;
 
-    let energy_saving_enabled = true;
-    let checkFromZoom = 17;
 
     const ANGLE1_MIN = 170.0;
     const ANGLE1_MAX = 190.0;
@@ -146,105 +160,105 @@
 
 
     function createDropdownOption({ id, title, description, options, isNew }) {
-    const line = document.createElement('div');
-    line.className = 'prefLineSelect';
-    if (typeof isNew === 'string') {
-      line.classList.add('newOption');
-      line.dataset.version = isNew;
-    }
-
-    const newSelect = document.createElement('select');
-    newSelect.className = 'prefElement';
-
-    const label = document.createElement('label');
-    label.innerText = title;
-    newSelect.id = `dog_${id}`;
-    if (options && options.length > 0) {
-        if(typeof options[0] === "object"){
-      options.forEach((o) => {
-        const option = document.createElement('option');
-        option.text = o.text;
-        option.value = o.value;
-        newSelect.add(option);
-      });
-        } else {
-              options.forEach((o) => {
-        const option = document.createElement('option');
-        option.text = o;
-        option.value = o;
-        newSelect.add(option);
-      });
+        const line = document.createElement('div');
+        line.className = 'prefLineSelect';
+        if (typeof isNew === 'string') {
+            line.classList.add('newOption');
+            line.dataset.version = isNew;
         }
+
+        const newSelect = document.createElement('select');
+        newSelect.className = 'prefElement';
+
+        const label = document.createElement('label');
+        label.innerText = title;
+        newSelect.id = `dog_${id}`;
+        if (options && options.length > 0) {
+            if(typeof options[0] === "object"){
+                options.forEach((o) => {
+                    const option = document.createElement('option');
+                    option.text = o.text;
+                    option.value = o.value;
+                    newSelect.add(option);
+                });
+            } else {
+                options.forEach((o) => {
+                    const option = document.createElement('option');
+                    option.text = o;
+                    option.value = o;
+                    newSelect.add(option);
+                });
+            }
+        }
+        const i = document.createElement('i');
+        i.innerText = description;
+        line.appendChild(label);
+        line.appendChild(i);
+        line.appendChild(newSelect);
+        return line;
     }
-    const i = document.createElement('i');
-    i.innerText = description;
-    line.appendChild(label);
-    line.appendChild(i);
-    line.appendChild(newSelect);
-    return line;
-  }
-   /**
+    /**
    * TODO: make as a library
    * @param {{id:string,title:string,description:string,min:number,max:number,step:(number|undefined),isNew:(string|undefined)}} param0
    */
-  function createRangeOption({
-    id,
-    title,
-    description,
-    min,
-    max,
-    step,
-    isNew,
-  }) {
-    const line = document.createElement('div');
-    line.className = 'prefLineSlider';
-    if (typeof isNew === 'string') {
-      line.classList.add('newOption');
-      line.dataset.version = isNew;
+    function createRangeOption({
+        id,
+        title,
+        description,
+        min,
+        max,
+        step,
+        isNew,
+    }) {
+        const line = document.createElement('div');
+        line.className = 'prefLineSlider';
+        if (typeof isNew === 'string') {
+            line.classList.add('newOption');
+            line.dataset.version = isNew;
+        }
+        const label = document.createElement('label');
+        label.innerText = title;
+
+        const input = createInput({
+            id,
+            min,
+            max,
+            step,
+            title: 'Pick a value',
+            className: 'prefElement form-control',
+            type: 'range',
+        });
+
+        label.appendChild(input);
+        line.appendChild(label);
+
+        if (description) {
+            const i = document.createElement('i');
+            i.innerText = description;
+            line.appendChild(i);
+        }
+
+        return line;
     }
-    const label = document.createElement('label');
-    label.innerText = title;
-
-    const input = createInput({
-      id,
-      min,
-      max,
-      step,
-      title: 'Pick a value',
-      className: 'prefElement form-control',
-      type: 'range',
-    });
-
-    label.appendChild(input);
-    line.appendChild(label);
-
-    if (description) {
-      const i = document.createElement('i');
-      i.innerText = description;
-      line.appendChild(i);
-    }
-
-    return line;
-  }
 
     function setScriptStatus(state){
-    const div = document.getElementById("dog_script_state");
+        const div = document.getElementById("dog_script_state");
         switch(state){
-            case "ENABLED":
-            div.innerText = "✅";
-            break;
-            case "DISABLED":
-            div.innerText = "🛑";
-            break;
-            case "ZOOM_STOPPED":
-            div.innerText = "🔍🔙";
-            break;
+            case states.enabled:
+                div.innerText = "✅";
+                break;
+            case states.disabled:
+                div.innerText = "🛑";
+                break;
+            case states.zoom_disabled:
+                div.innerText = "🔍🔙";
+                break;
             default:
                 alert("DOG: Invalid state");
         }
     }
 
-    function setUpLeftPanel() {
+    async function setUpLeftPanel() {
         const mainDiv = document.createElement('div');
 
         const title = document.createElement('h4');
@@ -272,7 +286,7 @@
                                              description: "When checked, the segment verification stops as soon as a problem has been found."});
         mainDiv.appendChild(energyCB);
 
-        let zoomRange = createDropdownOption({id:"zoom", title:"Enabled from zoom", description:"The script only scans the map from the given zoom", options:[14,15,16,17,18,19,20,21,22]});
+        let zoomRange = createDropdownOption({id:"zoom", title:"Enabled from zoom", description:"The script only scans the map from zoom ", options:[14,15,16,17,18,19,20,21,22]});
         mainDiv.appendChild(zoomRange);
 
 
@@ -328,21 +342,31 @@
         errorDelta.className = "dog_errorLine";
         mainDiv.appendChild(errorDelta);
 
-        let ignored = new WazeWrap.Interface.Tab(
-            '🐦',
-            mainDiv.innerHTML,
-            null // callback
-        );
+        const { tabLabel, tabPane } = W.userscripts.registerSidebarTab("wme-falcon-eye");
 
-        applyDefaultValues();
+        tabLabel.innerText = '🐦';
+        tabLabel.title = 'Falcon Eye';
+
+        tabPane.innerHTML = mainDiv.innerHTML;
+
+        // or use the helper function:
+        await W.userscripts.waitForElementConnected(tabPane);
+
+        loadSettings();
+        updateSettingsUI();
         addSettingsEventListeners();
+        manageStateChange();
     }
 
-    function applyDefaultValues(){
-        document.getElementById("dog_enable").checked=true;
-        document.getElementById("dog_energy").checked=energy_saving_enabled;
-        document.getElementById("dog_zoom").value=checkFromZoom;
-        setScriptStatus("ENABLED");
+    function applyDefaultValues() {
+        setSettingsDefaultValues();
+        updateSettingsUI();
+    }
+
+    function updateSettingsUI(){
+        document.getElementById("dog_enable").checked=settings.script_enabled;
+        document.getElementById("dog_energy").checked=settings.energy_saving;
+        document.getElementById("dog_zoom").value=settings.check_from_zoom;
     }
 
     function addSettingsEventListeners(){
@@ -351,26 +375,68 @@
         document.getElementById("dog_zoom").addEventListener("change", zoomSettingChanged);
     }
 
+    function storeSettings(){
+        try{
+            localStorage.setItem("falcon-eye", JSON.stringify({
+                "v":SCRIPT_VERSION,
+                "settings":{
+                    "script_enabled":settings.script_enabled,
+                    "energy_saving":settings.energy_saving,
+                    "check_from_zoom":settings.check_from_zoom,
+                }
+            }));
+        }catch(ex){
+            safeAlert('error', "Could not store settings in your browser");
+        }
+    }
+
+    function setSettingsDefaultValues(){
+        settings.script_enabled = scriptEnabledDefault;
+        settings.energy_saving = energy_saving_enabledDefault;
+        settings.check_from_zoom = checkFromZoomDefault;
+    }
+
+    function loadSettings(){
+        const storedSettings = JSON.parse(localStorage.getItem("falcon-eye"));
+        if(!storedSettings){
+            console.log("Falcon Eye running for the first time in this browser");
+            applyDefaultValues();
+        }else{
+            console.log("Falcon Eye: loading settings from the local storage.");
+            settings.script_enabled = storedSettings.settings.script_enabled;
+            settings.energy_saving = storedSettings.settings.energy_saving;
+            settings.check_from_zoom = storedSettings.settings.check_from_zoom;
+        }
+    }
+
     function zoomSettingChanged(e){
-        checkFromZoom = parseInt(e.target.value);
+        settings.check_from_zoom = parseInt(e.target.value);
+        storeSettings();
     }
 
     function toggleEnableCheckbox(e){
-        if(e.target.checked){
+        settings.script_enabled = e.target.checked;
+        storeSettings();
+        manageStateChange();
+    }
+
+    function manageStateChange(){
+        if(settings.script_enabled){
             removeEvents();
             initEvents();
-            setScriptStatus("ENABLED");
+            setScriptStatus(states.enabled);
         }else{
             // Script was disabled
             removeEvents();
             clearAll();
-            setScriptStatus("DISABLED");
+            setScriptStatus(states.disabled);
         }
     }
 
     function toggleEnergySavingCheckbox(e){
-        energy_saving_enabled = e.target.checked;
-        safeAlert('info', energy_saving_enabled?"The script will stop looking for problems after finding one":"The script will show all doglegs problems at once");
+        settings.check_from_zoom = e.target.checked;
+        safeAlert('info', settings.check_from_zoom?"The script will stop looking for problems after finding one":"The script will show all doglegs problems at once");
+        storeSettings();
     }
 
     function initWazeWrapElements(){
@@ -379,6 +445,7 @@
             SCRIPT_VERSION,
             `<b>What's new?</b>
             <ul>
+            <li>1.0.0: Use the new WME API, store the settings when they get changed.
             <li>0.0.9.5: The checkbox to disable the script now really disables the script. It is possible to select from what zoom level the script should work. The script state gets displayed in the script's panel.</li>
             <li>0.0.9.3: Fixes a problem with zoom while a segment is selected</li>
             <li>0.0.9.2: Fixes a problem when a ramp does not have enough geonodes</li>
@@ -392,7 +459,7 @@
 
     async function waitForWazeWrap() {
         let trials = 1;
-        let sleepTime = 150;
+        let sleepTime = 400;
         do {
             if (
                 !WazeWrap ||
@@ -453,11 +520,11 @@
 
     function startCheck(){
         clearAll();
-        if(W.map.getZoom() >= checkFromZoom) {
-            setScriptStatus("ENABLED");
+        if(W.map.getZoom() >= settings.check_from_zoom) {
+            setScriptStatus(states.enabled);
             checkSegments(Object.values(W.model.segments.objects));
         }else{
-            setScriptStatus("ZOOM_STOPPED");
+            setScriptStatus(states.zoom_disabled);
         }
     }
 
@@ -617,7 +684,7 @@
             let res = detectDoglegCandidate(s[i]);
             if(res.isDoglegCandidate === true) {
                 console.dir(res);
-                if(isDoglegValid(res, energy_saving_enabled)){
+                if(isDoglegValid(res, settings.energy_saving)){
                     highlightDoglegSuccess(res);
                 }else{
                     highlightDoglegFail(res);
@@ -853,6 +920,15 @@
         return false;
     }
 
-    init();
+    function newBootstrap(){
+        if (W?.userscripts?.state?.isReady) {
+            init();
+        } else {
+            document.addEventListener("wme-ready", init, {
+                once: true,
+            });
+        }
+    }
+    newBootstrap();
 
 })();
