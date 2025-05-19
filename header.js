@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        WME Falcon Eye
 // @namespace   bedo2991-waze
-// @version     1.1.0
+// @version     1.1.1
 // @description validates doglegs for Falcon
 // @updateURL    https://github.com/bedo2991/wme-falcon-eye/releases/latest/download/wme-falcon-eye.user.js
 // @downloadURL  https://github.com/bedo2991/wme-falcon-eye/releases/latest/download/wme-falcon-eye.user.js

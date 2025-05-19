@@ -1,9 +1,12 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "wme-falcon-eye",
   "devDependencies": {
+    "@rollup/plugin-commonjs": "^28.0.3",
+    "@rollup/plugin-node-resolve": "^16.0.1",
     "@rollup/plugin-strip": "^3.0.4",
-    "@rollup/plugin-typescript": "^12.1.0",
+    "@rollup/plugin-typescript": "^12.1.2",
+    "rollup": "^4.41.0",
     "tslib": "^2.7.0",
     "typescript": "^5.6.3",
     "wme-sdk-typings": "https://web-assets.waze.com/wme_sdk_docs/production/latest/wme-sdk-typings.tgz"
@@ -16,6 +19,8 @@
     "release": "cross-env replace-in-files --regex='\\d+\\.\\d+\\.\\d+' --replacement=%npm_package_version% header.js && npm run build"
   },
   "dependencies": {
+    "@turf/turf": "^7.2.0",
+    "@types/geojson": "^7946.0.16",
     "@types/tampermonkey": "^5.0.3",
     "concat": "^1.0.3",
     "cross-env": "^7.0.3",

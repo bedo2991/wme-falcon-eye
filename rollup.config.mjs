@@ -1,5 +1,7 @@
 import typescript from '@rollup/plugin-typescript';
 import strip from '@rollup/plugin-strip';
+import resolve from '@rollup/plugin-node-resolve';
+import commonjs from '@rollup/plugin-commonjs';
 
 export default {
     input: 'main.user.ts',
@@ -8,7 +10,13 @@ export default {
         format: 'iife'
     },
     plugins: [
-        typescript(),
+        resolve(), // Locate and bundle third-party dependencies (like Turf.js)
+        commonjs(), // Convert CommonJS modules to ES modules
+        typescript(
+            {
+                declaration: false
+            }
+        ),
         strip({
             include: ['**/*.ts'],
             debugger: true,
