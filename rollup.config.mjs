@@ -17,7 +17,8 @@ export default {
                 declaration: false
             }
         ),
-        strip({
+
+        process.env.npm_lifecycle_event === 'release' ? null : strip({
             include: ['**/*.ts'],
             debugger: true,
             functions: ['console.debug', 'console.info',

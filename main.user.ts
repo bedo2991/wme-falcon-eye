@@ -1,19 +1,25 @@
-import { WmeSDK } from "wme-sdk-typings";
+import { Node, ROAD_TYPE, SdkFeature, Segment, WmeSDK } from "wme-sdk-typings";
 import * as turf from "@turf/turf";
-import { Position } from "geojson";
+import { LineString, Point, Position } from "geojson";
 
-interface Dogleg {
-    isDoglegCandidate: boolean,
-    s1?: Waze.Feature.Vector.Segment,
-    s2?: Waze.Feature.Vector.Segment,
-    offramp?: Waze.Feature.Vector.Segment,
-    node?: Waze.Feature.Vector.Node,
+interface DoglegCandidate {
+    isDoglegCandidate: false
+}
+
+interface ConfirmedDogleg {
+    isDoglegCandidate: true,
+    s1Id: number,
+    s2Id: number,
+    offrampId: number,
+    nodeId: number,
     angle1?: number,
     angle2?: number,
     delta?: number,
     offramp_length?: number,
     s1_length?: number,
 }
+
+type Dogleg = DoglegCandidate | ConfirmedDogleg;
 
 enum FalconLayer {
     Segments = "Falcon Eye",
@@ -112,6 +118,7 @@ function initScript() {
                         'labelOutlineColor': '#4B0082',
                         'labelOutlineWidth': 2,
                         'pointerEvents': 'none',
+                        'graphic': false,
                         'labelAlign': 'cm', // set to center middle
                         'visibility': true,
                     }
@@ -238,7 +245,7 @@ function initScript() {
     }
 
 
-    function createDropdownOption({ id, title, description, options, isNew }: { id: string, title: string, description: string, options: ({ text: string; value: string }[] | string[]), isNew?: string }) {
+    function createDropdownOption({ id, title, description, options, isNew }: { id: string, title: string, description: string, options: string[], isNew?: string }) {
         const line = document.createElement('div');
         line.className = 'prefLineSelect';
         if (typeof isNew === 'string') {
@@ -253,21 +260,13 @@ function initScript() {
         label.innerText = title;
         newSelect.id = `dog_${id}`;
         if (options && options.length > 0) {
-            if (typeof options[0] === "object") {
-                options.forEach((o) => {
-                    const option = document.createElement('option');
-                    option.text = o.text;
-                    option.value = o.value;
-                    newSelect.add(option);
-                });
-            } else {
-                options.forEach((o) => {
-                    const option = document.createElement('option');
-                    option.text = o;
-                    option.value = o;
-                    newSelect.add(option);
-                });
-            }
+            options.forEach((o) => {
+                const option = document.createElement('option');
+                option.text = o;
+                option.value = o;
+                newSelect.add(option);
+            });
+
         }
         const i = document.createElement('i');
         i.innerText = description;
@@ -454,12 +453,12 @@ function initScript() {
     }
 
     function zoomSettingChanged(e: Event) {
-        settings.check_from_zoom = parseInt(e.target.value);
+        settings.check_from_zoom = parseInt((<HTMLInputElement>e.target).value);
         storeSettings();
     }
 
     function toggleEnableCheckbox(e: Event) {
-        settings.script_enabled = e.target.checked;
+        settings.script_enabled = (<HTMLInputElement>e.target).checked;
         storeSettings();
         manageStateChange();
     }
@@ -477,8 +476,8 @@ function initScript() {
         }
     }
 
-    function toggleEnergySavingCheckbox(e) {
-        settings.energy_saving = e.target.checked;
+    function toggleEnergySavingCheckbox(e: Event) {
+        settings.energy_saving = (<HTMLInputElement>e.target).checked;
         safeAlert(AlertType.INFO, settings.energy_saving ? "The script will stop looking for problems after finding one" : "The script will show all doglegs problems at once");
         storeSettings();
     }
@@ -569,7 +568,7 @@ function initScript() {
         clearAll();
         if (wmeSDK.Map.getZoomLevel() >= settings.check_from_zoom) {
             setScriptStatus(States.enabled);
-            checkSegments(Object.values(W.model.segments.objects));
+            checkSegments(wmeSDK.DataModel.Segments.getAll());
         } else {
             setScriptStatus(States.zoom_disabled);
         }
@@ -595,47 +594,58 @@ function initScript() {
     // We consider a dogleg candidate a one-way highway segment (freeway, major or minor)
     // Leading to a node with one off-ramp segment and another highway segment of the same type
     // Consider if the name equality of the highway should also be checked)
-    function detectDoglegCandidate(segmentModel: Waze.Feature.Vector.Segment) {
-        console.debug("Checking the given segment: " + segmentModel.attributes.id);
-        const nodogleg: Dogleg = { isDoglegCandidate: false };
-        let s2 = null;
-        let offramp = null;
+    function detectDoglegCandidate(s1: Segment): Dogleg {
+        console.debug("Checking the given segment: " + s1.id);
+        const nodogleg: DoglegCandidate = { isDoglegCandidate: false };
+        if (!s1) {
+            console.warn("Segment S1 not found");
+            return nodogleg;
+        }
+        let s2Sdk: Segment | null = null;
+        let offrampSdk: Segment | null = null;
 
         // Check if s1 is one-way
-        if (!segmentModel.isOneWay()) {
+        if (s1.isTwoWay) {
             return nodogleg;
         }
 
-        const attr1 = segmentModel.attributes;
-
         // Check if s1 is a highway
-        let roadType1 = attr1.roadType;
-
-        if (![3, 6, 7].includes(roadType1)) {
+        let roadType1 = s1.roadType;
+        //let expectedRoadTypes: number[] = [ROAD_TYPE.FREEWAY, ROAD_TYPE.MAJOR_HIGHWAY, ROAD_TYPE.MINOR_HIGHWAY];
+        let expectedRoadTypes: number[] = [3, 6, 7];
+        if (!expectedRoadTypes.includes(roadType1)) {
             return nodogleg;
         }
 
         // Check that s1 is not a roundabout
-        if (attr1.junctionID !== null) {
+        if (s1.junctionId !== null) {
             return nodogleg;
         }
 
         // get the "to" node of thisSegment
-        let middleNodeModel = null;
-        if (attr1.fwdDirection) {
-            middleNodeModel = W.model.nodes.getObjectById(attr1.toNodeID)
+        let middleNodeSdk: Node | null = null;
+
+        if (s1.isAtoB && s1.toNodeId) {
+            middleNodeSdk = wmeSDK.DataModel.Nodes.getById({
+                nodeId: s1.toNodeId
+            });
         }
         else {
-            middleNodeModel = W.model.nodes.getObjectById(attr1.fromNodeID)
+            if (s1.fromNodeId) {
+                middleNodeSdk = wmeSDK.DataModel.Nodes.getById({
+                    nodeId: s1.fromNodeId
+                });
+            }
         }
 
-        if (!middleNodeModel) {
+        if (!middleNodeSdk) {
             // This happens when drawing a new segment
             return nodogleg;
         }
 
         // Check if there are exactly 2 other segments connected to the "to" node
-        const connectedSegmentsIDs = middleNodeModel.getSegmentIds();
+
+        const connectedSegmentsIDs = middleNodeSdk.connectedSegmentIds;
         if (connectedSegmentsIDs.length !== 3) {
             return nodogleg;
         }
@@ -643,46 +653,56 @@ function initScript() {
         // Check that it is possible to go from the first segment to both other 2 segments
         console.debug("Checking connections");
         for (let i = 0; i < connectedSegmentsIDs.length; i++) {
-            if (connectedSegmentsIDs[i] === attr1.id) {
+            if (connectedSegmentsIDs[i] === s1.id) {
                 continue;
             }
-            let otherSegment = W.model.segments.getObjectById(connectedSegmentsIDs[i]);
-            if (!otherSegment)
+
+            const otherSegmentSdk = wmeSDK.DataModel.Segments.getById({
+                segmentId: connectedSegmentsIDs[i]
+            });
+            if (!otherSegmentSdk)
                 continue;
 
-            if (!middleNodeModel.isTurnAllowedBySegDirections(segmentModel, otherSegment)) {
+
+            if (!wmeSDK.DataModel.Turns.isTurnAllowedBySegmentDirections(
+                {
+                    fromSegmentId: s1.id,
+                    toSegmentId: connectedSegmentsIDs[i],
+                    nodeId: middleNodeSdk.id
+                }
+            )) {
                 console.debug("Connection is not allowed, skipping...");
                 return nodogleg;
             }
             console.debug("Setting the other 2 segments");
-            if (otherSegment.attributes.roadType === 4) {
+            if (otherSegmentSdk.roadType === 4 /*TODO: ROAD_TYPE.RAMP*/) {
                 console.debug("Segment is a ramp");
-                if (offramp) {
+                if (offrampSdk) {
                     return nodogleg;
                 }
                 // The ramp must be one-way
-                if (!otherSegment.isOneWay()) {
+                if (otherSegmentSdk.isTwoWay) {
                     return nodogleg;
                 }
-                offramp = otherSegment;
+                offrampSdk = otherSegmentSdk;
             }
-            else if (otherSegment.attributes.roadType === attr1.roadType) {
+            else if (otherSegmentSdk.roadType === s1.roadType) {
                 console.debug("Segment is S2");
-                if (s2) {
+                if (s2Sdk) {
                     return nodogleg;
                 }
                 // S2 must be one-way
-                if (!otherSegment.isOneWay()) {
+                if (otherSegmentSdk.isTwoWay) {
                     return nodogleg;
                 }
-                s2 = otherSegment;
+                s2Sdk = otherSegmentSdk;
             } else {
                 console.debug("Segment is invalid");
                 return nodogleg;
             }
         }
 
-        if (!s2 || !offramp) {
+        if (!s2Sdk || !offrampSdk) {
             console.info("Dogleg almost detected...");
             return nodogleg;
         }
@@ -690,19 +710,18 @@ function initScript() {
         console.debug("Segment is S1 of a dogleg");
         return {
             isDoglegCandidate: true,
-            s1: segmentModel,
-            s2: s2,
-            offramp: offramp,
-            node: middleNodeModel
+            s1Id: s1.id,
+            s2Id: s2Sdk.id,
+            offrampId: offrampSdk.id,
+            nodeId: middleNodeSdk.id,
         };
     }
 
-    function checkSegments(s: Array<Waze.Feature.Vector.Segment> = []) {
+    function checkSegments(s: Array<Segment> = []) {
         console.debug("Checking the given segments");
         for (let i = 0; i < s.length; i++) {
             let res = detectDoglegCandidate(s[i]);
             if (res.isDoglegCandidate === true) {
-                console.dir(res);
                 if (isDoglegValid(res, settings.energy_saving)) {
                     highlightDoglegSuccess(res);
                 } else {
@@ -712,19 +731,17 @@ function initScript() {
         }
     }
 
-    function addLabel(feature: SDKFeature) {
+    function addLabel(feature: SdkFeature) {
         wmeSDK.Map.addFeatureToLayer({
-            feature: feature, layerName: "Falcon Eye Labels"
+            feature: feature, layerName: FalconLayer.Labels
         })
-        //doglegLabelsLayer.addFeatures(Array.of(feature), { 'silent': true });
     }
 
-    function createLabel(text: string, point: OpenLayers.Geometry.Point, xOffset = 0, yOffset = 0) {
-        let convertedGeometry = W.userscripts.toGeoJSONGeometry(point).coordinates;
+    function createLabel(text: string, point: Position, xOffset = 0, yOffset = 0): SdkFeature<Point> {
         return {
             geometry:
             {
-                coordinates: [convertedGeometry[0], convertedGeometry[1]],
+                coordinates: [point[0], point[1]],
                 type: "Point"
             },
             id: Date.now().toString(),
@@ -737,12 +754,11 @@ function initScript() {
         }
     }
 
-    function createLineFeature({ olGeometry, properties }: { olGeometry: OpenLayers.Geometry.LineString, properties: { [key: string]: any } }): SdkFeature<WazeFeatureGeometry> {
-        let convertedGeometry = W.userscripts.toGeoJSONGeometry(olGeometry);
+    function createLineFeature({ geometry, properties }: { geometry: Position[], properties: { [key: string]: any } }): SdkFeature<LineString> {
         return {
             geometry:
             {
-                coordinates: convertedGeometry.coordinates,
+                coordinates: geometry,
                 type: "LineString"
             },
             id: Date.now().toString(),
@@ -752,11 +768,11 @@ function initScript() {
     }
 
 
-    function highlightDogleg(dogleg: Dogleg, failure: boolean) {
+    function highlightDogleg(dogleg: ConfirmedDogleg, failure: boolean) {
         console.debug("Highlight");
         //let style = failure ? warningStyle : successStyle;
 
-        const reducedPointList = getS1Points(dogleg.s1);
+        const reducedPointList = getS1Points(dogleg.s1Id);
 
         if (dogleg.angle1) {
             let labelFeature = createLabel(`_._: ${dogleg.angle1.toFixed(2)}°`, reducedPointList[1], 30, -30);
@@ -770,7 +786,7 @@ function initScript() {
         let lineFeature = null;
         if (dogleg.s1_length) {
             lineFeature = createLineFeature({
-                olGeometry: new OpenLayers.Geometry.LineString(reducedPointList),
+                geometry: reducedPointList,
                 properties: { isError: true }
             });
             let labelFeature = createLabel(`${dogleg.s1_length.toLocaleString(undefined,
@@ -781,7 +797,7 @@ function initScript() {
             addLabel(labelFeature);
         } else {
             lineFeature = createLineFeature({
-                olGeometry: new OpenLayers.Geometry.LineString(reducedPointList),
+                geometry: reducedPointList,
                 properties: { isWarning: !!failure }
             });
         }
@@ -789,7 +805,7 @@ function initScript() {
 
         let reducedPointListRamp;
         try {
-            reducedPointListRamp = getRampPoints(dogleg.offramp);
+            reducedPointListRamp = getRampPoints(dogleg.offrampId);
         }
         catch (e) {
             //The ramp does not have enough geo nodes.
@@ -802,7 +818,7 @@ function initScript() {
         }
         if (dogleg.offramp_length) {
             lineFeatureRamp = createLineFeature({
-                olGeometry: new OpenLayers.Geometry.LineString(reducedPointListRamp),
+                geometry: reducedPointListRamp,
                 properties: { isError: true }
             });
             let labelFeature = createLabel(`${dogleg.offramp_length.toLocaleString(undefined,
@@ -813,7 +829,7 @@ function initScript() {
             addLabel(labelFeature);
         } else {
             lineFeatureRamp = createLineFeature({
-                olGeometry: new OpenLayers.Geometry.LineString(reducedPointListRamp),
+                geometry: reducedPointListRamp,
                 properties: { isWarning: !!failure }
             });
         }
@@ -823,12 +839,12 @@ function initScript() {
         });
     }
 
-    function highlightDoglegSuccess(dogleg: Dogleg) {
+    function highlightDoglegSuccess(dogleg: ConfirmedDogleg) {
         console.debug("Highlight success");
         highlightDogleg(dogleg, false);
     }
 
-    function highlightDoglegFail(dogleg: Dogleg) {
+    function highlightDoglegFail(dogleg: ConfirmedDogleg) {
         console.debug("Highlight false");
         highlightDogleg(dogleg, true);
     }
@@ -836,7 +852,7 @@ function initScript() {
     /***
     Checks if the given dogleg is correct and will be used nicely by Falcon
     */
-    function isDoglegValid(dog: Dogleg, shortcut = false): boolean {
+    function isDoglegValid(dog: ConfirmedDogleg, shortcut = false): boolean {
         if (shortcut) {
             return checkLengthOfIncomingSegment(dog) && checkLengthOfRampIsCorrect(dog) && checkAngle1(dog) && checkAngle2(dog) && checkDelta(dog);
         }
@@ -850,27 +866,22 @@ function initScript() {
         return result;
     }
 
-    // Returns the distance in meter between the points p0 and p1
-    /** @deprecated */
-    function computeDistance(p0, p1) {
-        return turf.distance(W.userscripts.toGeoJSONGeometry(p0), W.userscripts.toGeoJSONGeometry(p1), { units: 'meters' });
-    }
-
     function computeDistanceInMeters(p0: turf.helpers.Coord, p1: turf.helpers.Coord) {
         return turf.distance(p0, p1, { units: 'meters' });
     }
 
-    //Returns [p0, p1] of the second subsegment starting from the middleNode
-    /** @deprecated */
-    function getRampPoints(ramp: Waze.Feature.Vector.Segment) {
+    function getRampPoints(rampId: number): Position[] {
         let p0, p1;
-        const a = ramp.attributes;
-        const g = a.geometry.getVertices();
+        const ramp = wmeSDK.DataModel.Segments.getById({
+            segmentId: rampId
+        });
+        const g = ramp?.geometry.coordinates;
+        if (!g) throw "Geometry not found";
         // What do you do if the offramp does not have a second subsegment?
         if (g.length < 3) {
             throw 'Ramp does not have enough subsegments.';
         }
-        if (a.fwdDirection === true) {
+        if (ramp.isAtoB) {
             p0 = g[1];
             p1 = g[2];
         } else {
@@ -900,20 +911,6 @@ function initScript() {
         }
         return [p0, p1];
     }
-    //Return the points of the subsegment right after the middle node
-    /** @deprecated */
-    function getS2Points(s2) {
-        let p0, p1;
-        const g = s2.attributes.geometry.getVertices();
-        if (s2.attributes.fwdDirection === true) {
-            p0 = g[0];
-            p1 = g[1];
-        } else {
-            p0 = g[g.length - 1];
-            p1 = g[g.length - 2];
-        }
-        return [p0, p1];
-    }
 
     /**
      * Return the points of the subsegment right after the middle node
@@ -937,12 +934,16 @@ function initScript() {
         return [p0, p1];
     }
 
-    //Return the points of the subsegment right before the middle node
-    /** @deprecated */
-    function getS1Points(s1: Waze.Feature.Vector.Segment) {
+    function getS1Points(segId: number): Array<Position> {
+        const s1 = wmeSDK.DataModel.Segments.getById({
+            segmentId: segId
+        });
+        if (!s1) throw "Segment S1 not found";
+
+        const line: LineString = s1.geometry;
+        const g = line.coordinates;
         let p0, p1;
-        const g = s1.attributes.geometry.getVertices();
-        if (s1.attributes.fwdDirection === true) {
+        if (s1.isAtoB) {
             p0 = g[g.length - 2];
             p1 = g[g.length - 1];
         } else {
@@ -970,10 +971,9 @@ function initScript() {
     }
 
     // Check that the subsegment of s1 right before the node is at least 12m long
-    function checkLengthOfIncomingSegment(dog: Dogleg) {
-        const s1ID = dog.s1?.attributes.id;
-        if (!s1ID) throw "Could not find the offramp id";
-        let [p0, p1] = getS1GeoPoints(s1ID);
+    function checkLengthOfIncomingSegment(dog: ConfirmedDogleg) {
+        if (!dog.s1Id) throw "Could not find the offramp id";
+        let [p0, p1] = getS1GeoPoints(dog.s1Id);
         let distance = computeDistanceInMeters(p0, p1);
         console.debug("Length S1: " + distance);
         if (distance > INCOMING_MIN_LENGTH) { return true; }
@@ -982,9 +982,9 @@ function initScript() {
     }
 
     //Check that the subsegment after the first geometric node is at least 12m long
-    function checkLengthOfRampIsCorrect(dog: Dogleg): boolean {
+    function checkLengthOfRampIsCorrect(dog: ConfirmedDogleg): boolean {
         let p0: Position, p1: Position;
-        const offRampId = dog.offramp?.attributes.id;
+        const offRampId = dog.offrampId;
         if (!offRampId) throw "Could not find the offramp id";
         try {
             [p0, p1] = getRampGeoPoints(offRampId);
@@ -999,9 +999,39 @@ function initScript() {
         return false;
     }
 
+
+    function getAngleToSegment(nodeId: number, segmentId: number): number {
+        const segment = wmeSDK.DataModel.Segments.getById({
+            segmentId: segmentId
+        });
+        if (!segment) {
+            throw "Segment not found";
+        }
+        // Get the geometry (array of coordinates) of the segment
+        const s = segment.geometry.coordinates;
+        let t: Position, n: Position;
+
+        // Determine which end of the segment is connected to the node
+        if (segment.fromNodeId === nodeId) {
+            t = s[0];
+            n = s[1];
+        } else if (segment.toNodeId === nodeId) {
+            t = s[s.length - 1];
+            n = s[s.length - 2];
+        } else {
+            throw "Node is not connected to the segment";
+        }
+
+        // Calculate the angle in degrees
+        let angle = Math.atan2(n[1] - t[1], n[0] - t[0]) * One80DividedByPi; // 180.0 / Math.PI
+        if (angle < 0) angle = 360 + angle;
+        return angle;
+    }
+
+
     // Check that the angle between S1 and S2 is max 10°
-    function checkAngle1(dog: Dogleg) {
-        let angle = Math.abs(ja_angle_diff(dog.node.getAngleToSegment(dog.s1), dog.node.getAngleToSegment(dog.s2)));
+    function checkAngle1(dog: ConfirmedDogleg) {
+        let angle = Math.abs(ja_angle_diff(getAngleToSegment(dog.nodeId, dog.s1Id), getAngleToSegment(dog.nodeId, dog.s2Id)));
         console.debug("Angle 1: " + angle);
         if (angle > ANGLE1_MIN && angle < ANGLE1_MAX) { return true; }
         dog.angle1 = angle;
@@ -1009,8 +1039,8 @@ function initScript() {
     }
 
     // Check that the angle btw S2 and offramp is between 20-55°
-    function checkAngle2(dog: Dogleg) {
-        let angle = Math.abs(ja_angle_diff(dog.node.getAngleToSegment(dog.s2), dog.node.getAngleToSegment(dog.offramp)));
+    function checkAngle2(dog: ConfirmedDogleg) {
+        let angle = Math.abs(ja_angle_diff(getAngleToSegment(dog.nodeId, dog.s2Id), getAngleToSegment(dog.nodeId, dog.offrampId)));
         console.debug("Angle 2: " + angle);
         if (angle > ANGLE2_MIN && angle < ANGLE2_MAX) { return true; }
         dog.angle2 = angle;
@@ -1018,13 +1048,13 @@ function initScript() {
     }
 
     // Check that the delta is maximum 10°
-    function checkDelta(dog: Dogleg) {
+    function checkDelta(dog: ConfirmedDogleg) {
         let r0, r1;
-        if (!dog.offramp?.attributes.id || !dog.s2?.attributes.id) {
+        if (!dog.offrampId || !dog.s2Id) {
             throw "Could not find the offramp or s2 id";
         }
         try {
-            [r0, r1] = getRampGeoPoints(dog.offramp?.attributes.id);
+            [r0, r1] = getRampGeoPoints(dog.offrampId);
         } catch (e) {
             console.warn(e);
             return false;
@@ -1032,7 +1062,7 @@ function initScript() {
         let angleRamp = Math.atan2(r1[1] - r0[1], r1[0] - r0[0]) * One80DividedByPi; // 180.0 / Math.PI
         console.debug("angleRamp: " + angleRamp);
 
-        let [hw0, hw1] = getS2GeoPoints(dog.s2?.attributes.id);
+        let [hw0, hw1] = getS2GeoPoints(dog.s2Id);
         let angleHw = Math.atan2(hw1[1] - hw0[1], hw1[0] - hw0[0]) * One80DividedByPi;
         console.debug("angleHw: " + angleHw);
 
