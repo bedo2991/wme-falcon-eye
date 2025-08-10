@@ -1,5 +1,5 @@
 {
-  "version": "1.2.1",
+  "version": "1.2.2",
   "name": "wme-falcon-eye",
   "devDependencies": {
     "@rollup/plugin-commonjs": "^28.0.3",
@@ -14,7 +14,7 @@
   "scripts": {
     "compile": "rollup -c",
     "watch": "rollup -c --watch",
-    "concat": "cross-env concat -o releases\\release-%npm_package_version%.user.js header.js .out/main.user.js",
+    "concat": "cross-env concat -o releases\\wme-falcon-eye-%npm_package_version%.user.js header.js .out/main.user.js",
     "build": "npm run compile && npm run concat",
     "release": "cross-env replace-in-files --regex='\\d+\\.\\d+\\.\\d+' --replacement=%npm_package_version% header.js && npm run build"
   },
