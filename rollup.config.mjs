@@ -18,12 +18,12 @@ export default {
             }
         ),
 
-        process.env.npm_lifecycle_event === 'release' ? null : strip({
+        ['release', 'build'].includes(process.env.npm_lifecycle_event) ? strip({
             include: ['**/*.ts'],
             debugger: true,
             functions: ['console.debug', 'console.info',
                 'console.log'
             ]
-        }),
+        }) : null,
     ]
 };

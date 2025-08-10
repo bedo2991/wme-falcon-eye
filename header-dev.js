@@ -14,7 +14,8 @@
 // @exclude     https://beta.waze.com/user/editor*
 // @exclude     https://www.waze.com/editor/sdk*
 // @exclude     https://beta.waze.com/editor/sdk*
-// @website https://docs.google.com/document/d/16p3AQg5-7HM-fz92ykkAipADnO3Aw2j3oCLCNmOml5c/edit?usp=sharing
+// @website     https://docs.google.com/document/d/16p3AQg5-7HM-fz92ykkAipADnO3Aw2j3oCLCNmOml5c/edit?usp=sharing
+// @require     https://update.greasyfork.org/scripts/24851/1558013/WazeWrap.js
 // @grant       none
 
 // @require       file:///C:/Users/[USERNAME]/Documents/MyDir/.out/main.user.js

@@ -1,5 +1,5 @@
 {
-  "version": "1.2.0",
+  "version": "1.2.1",
   "name": "wme-falcon-eye",
   "devDependencies": {
     "@rollup/plugin-commonjs": "^28.0.3",

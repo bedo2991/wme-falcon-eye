@@ -75,7 +75,7 @@ function initScript() {
                     },
                 },
                 {
-                    predicate: featureProperties => !!featureProperties.isError,
+                    predicate: (featureProperties) => !!featureProperties.isError,
                     style: {
                         pointerEvents: 'none',
                         strokeColor: '#ff0000',
@@ -86,7 +86,7 @@ function initScript() {
                     },
                 },
                 {
-                    predicate: featureProperties => !!featureProperties.isWarning,
+                    predicate: (featureProperties) => !!featureProperties.isWarning,
                     style: {
                         pointerEvents: 'none',
                         strokeColor: '#9932CC',
@@ -166,9 +166,6 @@ function initScript() {
 
     const One80DividedByPi = 180.0 / Math.PI;
 
-    let OLWazeProjection: OpenLayers.Projection;
-    let WorldGeodeticSystemProjection: OpenLayers.Projection;
-
 
     const ANGLE1_MIN = 170.0;
     const ANGLE1_MAX = 190.0;
@@ -186,22 +183,25 @@ function initScript() {
     //let doglegLabelsLayer: OpenLayers.Layer.Vector;
 
     async function init() {
+        // Load settings first, before any UI or event initialization
+        loadSettings();
+
         addLayers();
-        await setUpLeftPanel();
+
+        // Initialize the script logic based on loaded settings
+        manageStateChange();
+
+        // Set up UI asynchronously - this can happen later
+        setUpLeftPanel();
+
         waitForWazeWrap().then((result) => {
             if (result === true) {
                 initWazeWrapElements();
             }
         });
-        initOpenLayersElements();
-        manageStateChange();
-        initEvents();
-        startCheck();
-    }
 
-    function initOpenLayersElements() {
-        OLWazeProjection = W.map.getOLMap().projection;
-        WorldGeodeticSystemProjection = new OpenLayers.Projection('EPSG:4326');
+        // Start the main checking logic
+        startCheck();
     }
 
     function createInput({ id, type, className, title, min, max, step }: { id: string; type: string; className?: (string | undefined); title: (string | undefined); min?: number; max?: number; step?: number; }) {
@@ -277,7 +277,9 @@ function initScript() {
     }
 
     function setScriptStatus(state: States) {
-        const div = <HTMLDivElement>document.getElementById("dog_script_state");
+        const div = document.getElementById("dog_script_state") as HTMLDivElement;
+        if (!div) return; // Exit safely if UI element doesn't exist yet
+
         switch (state) {
             case States.enabled:
                 div.innerText = "✅";
@@ -387,9 +389,20 @@ function initScript() {
 
         tabPane.innerHTML = mainDiv.innerHTML;
 
-        loadSettings();
+        // Set up UI elements after DOM is ready
         updateSettingsUI();
         addSettingsEventListeners();
+
+        // Set the initial status icon after the UI is created
+        if (settings.script_enabled) {
+            if (wmeSDK.Map.getZoomLevel() >= settings.check_from_zoom) {
+                setScriptStatus(States.enabled);
+            } else {
+                setScriptStatus(States.zoom_disabled);
+            }
+        } else {
+            setScriptStatus(States.disabled);
+        }
     }
 
     function applyDefaultValues() {
@@ -398,15 +411,25 @@ function initScript() {
     }
 
     function updateSettingsUI() {
-        (<HTMLInputElement>document.getElementById("dog_enable")).checked = settings.script_enabled;
-        (<HTMLInputElement>document.getElementById("dog_energy")).checked = settings.energy_saving;
-        (<HTMLInputElement>document.getElementById("dog_zoom")).value = String(settings.check_from_zoom);
+        // Safely update UI elements if they exist
+        const enableEl = document.getElementById("dog_enable") as HTMLInputElement;
+        const energyEl = document.getElementById("dog_energy") as HTMLInputElement;
+        const zoomEl = document.getElementById("dog_zoom") as HTMLInputElement;
+
+        if (enableEl) enableEl.checked = settings.script_enabled;
+        if (energyEl) energyEl.checked = settings.energy_saving;
+        if (zoomEl) zoomEl.value = String(settings.check_from_zoom);
     }
 
     function addSettingsEventListeners() {
-        (<HTMLInputElement>document.getElementById("dog_enable")).addEventListener("click", toggleEnableCheckbox);
-        (<HTMLInputElement>document.getElementById("dog_energy")).addEventListener("click", toggleEnergySavingCheckbox);
-        (<HTMLInputElement>document.getElementById("dog_zoom")).addEventListener("change", zoomSettingChanged);
+        // Safely add event listeners if elements exist
+        const enableEl = document.getElementById("dog_enable") as HTMLInputElement;
+        const energyEl = document.getElementById("dog_energy") as HTMLInputElement;
+        const zoomEl = document.getElementById("dog_zoom") as HTMLInputElement;
+
+        if (enableEl) enableEl.addEventListener("click", toggleEnableCheckbox);
+        if (energyEl) energyEl.addEventListener("click", toggleEnergySavingCheckbox);
+        if (zoomEl) zoomEl.addEventListener("change", zoomSettingChanged);
     }
 
     function storeSettings() {
@@ -461,6 +484,11 @@ function initScript() {
         settings.script_enabled = (<HTMLInputElement>e.target).checked;
         storeSettings();
         manageStateChange();
+
+        // Immediately start checking if the script was enabled
+        if (settings.script_enabled) {
+            startCheck();
+        }
     }
 
     function manageStateChange() {
@@ -478,7 +506,7 @@ function initScript() {
 
     function toggleEnergySavingCheckbox(e: Event) {
         settings.energy_saving = (<HTMLInputElement>e.target).checked;
-        safeAlert(AlertType.INFO, settings.energy_saving ? "The script will stop looking for problems after finding one" : "The script will show all doglegs problems at once");
+        safeAlert(AlertType.INFO, settings.energy_saving ? "The script will stop looking for problems after finding the first one" : "The script will show all doglegs problems at once");
         storeSettings();
     }
 
@@ -488,12 +516,10 @@ function initScript() {
             SCRIPT_VERSION,
             `<b>What's new?</b>
             <ul>
+            <li>1.2.1: Fix for inaccurate angle computation after moving to the SDK. Better handling of the settings states</li>
             <li>1.1.1: Use the new WME SDK.</li>
             <li>1.0.0: Use the new WME API, store the settings when they get changed.</li>
             <li>0.0.9.5: The checkbox to disable the script now really disables the script. It is possible to select from what zoom level the script should work. The script state gets displayed in the script's panel.</li>
-            <li>0.0.9.3: Fixes a problem with zoom while a segment is selected</li>
-            <li>0.0.9.2: Fixes a problem when a ramp does not have enough geonodes</li>
-            <li>0.0.7: Use realsize distance (take Earth curvature into consideration)</li>
             </ul>`,
             "",
             GM_info.script.supportURL
@@ -1022,9 +1048,15 @@ function initScript() {
             throw "Node is not connected to the segment";
         }
 
-        // Calculate the angle in degrees
-        let angle = Math.atan2(n[1] - t[1], n[0] - t[0]) * One80DividedByPi; // 180.0 / Math.PI
+        // Use Turf.js bearing calculation for proper spherical geometry
+        // bearing() returns angle in degrees from north (-180 to 180)
+        const bearing = turf.bearing(t, n);
+
+        // Convert to 0-360 range (WME uses angles from 0-360)
+        let angle = bearing;
         if (angle < 0) angle = 360 + angle;
+
+        console.debug(`Angle to segment (nodeId: ${nodeId}, segmentId: ${segmentId}): ${angle}`);
         return angle;
     }
 
