@@ -17,6 +17,7 @@
 // @website     https://docs.google.com/document/d/16p3AQg5-7HM-fz92ykkAipADnO3Aw2j3oCLCNmOml5c/edit?usp=sharing
 // @require     https://update.greasyfork.org/scripts/24851/1558013/WazeWrap.js
 // @grant       none
+// @supportURL  https://www.waze.com/discuss/t/script-wme-falcon-eye/391102
 
 // @require       file:///C:/Users/[USERNAME]/Documents/MyDir/.out/main.user.js
 // ==/UserScript==
