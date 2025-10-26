@@ -30,6 +30,7 @@ enum FalconLayer {
 window.SDK_INITIALIZED.then(initScript);
 
 function initScript() {
+    let batchSize = 200;
     // initialize the sdk, these should remain here at the top of the script
     if (!window.getWmeSdk) {
         // This block is required for type checking, but it is guaranteed that the function exists.
@@ -157,11 +158,13 @@ function initScript() {
     const scriptEnabledDefault = true;
     const energy_saving_enabledDefault = true;
     const checkFromZoomDefault = 17;
+    const displayApprovedDoglegsDefault = true;
 
     const settings = Object.seal({
         script_enabled: scriptEnabledDefault,
         energy_saving: energy_saving_enabledDefault,
-        check_from_zoom: checkFromZoomDefault
+        check_from_zoom: checkFromZoomDefault,
+        display_approved_doglegs: displayApprovedDoglegsDefault
     });
 
     const One80DividedByPi = 180.0 / Math.PI;
@@ -327,7 +330,14 @@ function initScript() {
         });
         mainDiv.appendChild(energyCB);
 
-        let zoomRange = createDropdownOption({ id: "zoom", title: "Enabled from zoom", description: "The script only scans the map from zoom ", options: ["14", "15", "16", "17", "18", "19", "20", "21", "22"] });
+        let displayOK = createCheckboxOption({
+            id: "displayOK",
+            title: "Display approved doglegs in green",
+            description: "When checked, segments that are OK will be displayed."
+        });
+        mainDiv.appendChild(displayOK);
+
+        let zoomRange = createDropdownOption({ id: "zoom", title: `Enabled from zoom (Default: ${checkFromZoomDefault})`, description: "The script only scans the map from zoom ", options: ["14", "15", "16", "17", "18", "19", "20", "21", "22"] });
         mainDiv.appendChild(zoomRange);
 
 
@@ -413,23 +423,45 @@ function initScript() {
     function updateSettingsUI() {
         // Safely update UI elements if they exist
         const enableEl = document.getElementById("dog_enable") as HTMLInputElement;
+        const displayOKEl = document.getElementById("dog_displayOK") as HTMLInputElement;
         const energyEl = document.getElementById("dog_energy") as HTMLInputElement;
         const zoomEl = document.getElementById("dog_zoom") as HTMLInputElement;
+        const options = document.getElementById("dog_zoom") as HTMLSelectElement;
 
         if (enableEl) enableEl.checked = settings.script_enabled;
         if (energyEl) energyEl.checked = settings.energy_saving;
+        if (displayOKEl) displayOKEl.checked = settings.display_approved_doglegs;
         if (zoomEl) zoomEl.value = String(settings.check_from_zoom);
+        if (options) {
+            options.value = String(settings.check_from_zoom);
+        }
     }
 
     function addSettingsEventListeners() {
         // Safely add event listeners if elements exist
         const enableEl = document.getElementById("dog_enable") as HTMLInputElement;
         const energyEl = document.getElementById("dog_energy") as HTMLInputElement;
+        const displayOKEl = document.getElementById("dog_displayOK") as HTMLInputElement;
         const zoomEl = document.getElementById("dog_zoom") as HTMLInputElement;
 
         if (enableEl) enableEl.addEventListener("click", toggleEnableCheckbox);
         if (energyEl) energyEl.addEventListener("click", toggleEnergySavingCheckbox);
+        if (displayOKEl) displayOKEl.addEventListener("click", toggleDisplayApprovedDoglegsCheckbox);
         if (zoomEl) zoomEl.addEventListener("change", zoomSettingChanged);
+    }
+
+    function toggleDisplayApprovedDoglegsCheckbox(e: Event) {
+        settings.display_approved_doglegs = (<HTMLInputElement>e.target).checked;
+        if (settings.display_approved_doglegs) {
+            safeAlert(AlertType.INFO, "The script will show all approved doglegs.");
+        } else {
+            safeAlert(AlertType.WARNING, "The script will hide approved doglegs. There is no way to know if a dogleg was really checked or not.");
+        }
+
+        storeSettings();
+        if (settings.script_enabled) {
+            startCheck();
+        }
     }
 
     function storeSettings() {
@@ -440,6 +472,7 @@ function initScript() {
                     "script_enabled": settings.script_enabled,
                     "energy_saving": settings.energy_saving,
                     "check_from_zoom": settings.check_from_zoom,
+                    "display_approved_doglegs": settings.display_approved_doglegs
                 }
             }));
         } catch (ex) {
@@ -451,6 +484,7 @@ function initScript() {
         settings.script_enabled = scriptEnabledDefault;
         settings.energy_saving = energy_saving_enabledDefault;
         settings.check_from_zoom = checkFromZoomDefault;
+        settings.display_approved_doglegs = displayApprovedDoglegsDefault;
     }
 
     function loadSettings() {
@@ -471,6 +505,7 @@ function initScript() {
         console.log("Falcon Eye: loading settings from the local storage.");
         settings.script_enabled = storedSettings.settings.script_enabled;
         settings.energy_saving = storedSettings.settings.energy_saving;
+        settings.display_approved_doglegs = storedSettings.settings.display_approved_doglegs;
         settings.check_from_zoom = storedSettings.settings.check_from_zoom;
 
     }
@@ -516,6 +551,7 @@ function initScript() {
             SCRIPT_VERSION,
             `<b>What's new?</b>
             <ul>
+            <li>1.2.2: Improved performance, the WME should not freeze when a lot of segments get loaded at once. Improved settings and storage</li>
             <li>1.2.1: Fix for inaccurate angle computation after moving to the SDK. Better handling of the settings states</li>
             <li>1.1.1: Use the new WME SDK.</li>
             <li>1.0.0: Use the new WME API, store the settings when they get changed.</li>
@@ -743,17 +779,84 @@ function initScript() {
         };
     }
 
-    function checkSegments(s: Array<Segment> = []) {
+    let checkSegmentsRunning = false;
+    let checkSegmentsAborted = false;
+
+    async function checkSegments(s: Array<Segment> = []) {
+        // If already running, signal abort and wait for it to finish
+        if (checkSegmentsRunning) {
+            checkSegmentsAborted = true;
+            // Wait for the current instance to finish
+            while (checkSegmentsRunning) {
+                await new Promise(resolve => setTimeout(resolve, 10));
+            }
+        }
+
+        checkSegmentsRunning = true;
+        checkSegmentsAborted = false;
+
         console.debug("Checking the given segments");
-        for (let i = 0; i < s.length; i++) {
-            let res = detectDoglegCandidate(s[i]);
-            if (res.isDoglegCandidate === true) {
-                if (isDoglegValid(res, settings.energy_saving)) {
-                    highlightDoglegSuccess(res);
-                } else {
-                    highlightDoglegFail(res);
+
+        // Dynamic batch size management
+        let currentBatchSize = batchSize;
+        const minBatchSize = 10;
+        const maxBatchSize = 1000;
+        const targetBatchTime = 130; // Target 130ms per batch
+        const tolerance = 20; // ±20ms tolerance
+
+        try {
+            for (let i = 0; i < s.length; i += currentBatchSize) {
+                // Check if we should abort
+                if (checkSegmentsAborted) {
+                    console.debug("checkSegments aborted");
+                    return;
+                }
+
+                const batch = s.slice(i, i + currentBatchSize);
+                const batchStartTime = performance.now();
+
+                for (let j = 0; j < batch.length; j++) {
+                    // Check if we should abort
+                    if (checkSegmentsAborted) {
+                        console.debug("checkSegments aborted");
+                        return;
+                    }
+
+                    let res = detectDoglegCandidate(batch[j]);
+                    if (res.isDoglegCandidate === true) {
+                        if (isDoglegValid(res, settings.energy_saving)) {
+                            if (settings.display_approved_doglegs) {
+                                highlightDoglegSuccess(res);
+                            }
+                        } else {
+                            highlightDoglegFail(res);
+                        }
+                    }
+                }
+
+                const batchTime = performance.now() - batchStartTime;
+                const batchWasFull = batch.length === currentBatchSize;
+
+                // Adjust batch size based on execution time
+                if (batchTime < targetBatchTime - tolerance && batchWasFull && currentBatchSize < maxBatchSize) {
+                    // Batch was fast and full, increase size by 25%
+                    currentBatchSize = Math.min(maxBatchSize, Math.floor(currentBatchSize * 1.25));
+                } else if (batchTime > targetBatchTime + tolerance && currentBatchSize > minBatchSize) {
+                    // Batch was slow, decrease size by 25%
+                    currentBatchSize = Math.max(minBatchSize, Math.floor(currentBatchSize * 0.75));
+                }
+
+                console.debug(`Batch processed: ${batch.length} segments in ${batchTime.toFixed(2)}ms, next batch size: ${currentBatchSize}`);
+
+                // Allow browser to process other tasks between batches
+                if (i + currentBatchSize < s.length) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
                 }
             }
+        } finally {
+            // Update the global batch size for next time
+            batchSize = currentBatchSize;
+            checkSegmentsRunning = false;
         }
     }
 
